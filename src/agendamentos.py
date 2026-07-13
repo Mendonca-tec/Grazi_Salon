@@ -1,10 +1,108 @@
+
 from src import dados
 from src import servicos
-from datetime import datetime
+import math
+from datetime import datetime, timedelta
+
+# Horário de funcionamento do salão e tamanho de cada slot(Usado como tempo base para cada agendamento) fixo de atendimento
+ABERTURA_MANHA = "08:00"
+FECHAMENTO_MANHA = "12:00"
+ABERTURA_TARDE = "14:00"
+FECHAMENTO_TARDE = "18:00"
+DURACAO_SLOT_MINUTOS = 30
+
 
 def carregar_agendamentos():
     '''Carrega os agendamentos a partir do arquivo JSON'''
     return dados.carregar_agendamentos()
+
+
+def _gerar_slots_periodo(inicio, fim):
+    '''Gera os horários fixos (HH:MM) de um período, em passos de
+    DURACAO_SLOT_MINUTOS, sem incluir o horário de fechamento.'''
+    slots = []
+    atual = datetime.strptime(inicio, "%H:%M")
+    fim_dt = datetime.strptime(fim, "%H:%M")
+    while atual < fim_dt:
+        slots.append(atual.strftime("%H:%M"))
+        atual += timedelta(minutes=DURACAO_SLOT_MINUTOS)
+    return slots
+
+
+def gerar_slots_do_dia():
+    '''Gera todos os horários fixos de atendimento do dia (manhã + tarde),
+    respeitando o intervalo de almoço entre 12:00 e 14:00.'''
+    return _gerar_slots_periodo(ABERTURA_MANHA, FECHAMENTO_MANHA) + \
+        _gerar_slots_periodo(ABERTURA_TARDE, FECHAMENTO_TARDE)
+
+
+def _slots_necessarios(duracao_minutos):
+    '''Quantos slots de DURACAO_SLOT_MINUTOS um serviço ocupa,
+    arredondando pra cima (ex.: 40 min -> 2 slots de 30 min).'''
+    return math.ceil(duracao_minutos / DURACAO_SLOT_MINUTOS)
+
+
+def horarios_disponiveis(agendamentos, data, duracao_minutos):
+    '''Retorna a lista de horários (HH:MM) onde é possível encaixar um
+    serviço com a duração informada, no dia especificado — considerando
+    os slots fixos de atendimento, o intervalo de almoço, e os agendamentos
+    já ativos naquele dia (cada um ocupando os slots correspondentes à
+    duração do seu próprio serviço).'''
+    todos_slots = gerar_slots_do_dia()
+    slots_precisos = _slots_necessarios(duracao_minutos)
+
+    # Marca todos os slots já ocupados por agendamentos ativos nesse dia
+    slots_ocupados = set()
+    for ag in agendamentos.values():
+        if ag["data"] != data or ag["status"] != "agendado":
+            continue
+
+        n_slots_ag = _slots_necessarios(ag.get("duracao_minutos", DURACAO_SLOT_MINUTOS))
+        try:
+            idx_inicio = todos_slots.index(ag["hora"])
+        except ValueError:
+            continue  # horário fora da grade fixa (dado antigo/legado) - ignora
+
+        for i in range(idx_inicio, idx_inicio + n_slots_ag):
+            if i < len(todos_slots):
+                slots_ocupados.add(todos_slots[i])
+
+    disponiveis = []
+    for i in range(len(todos_slots)):
+        candidatos = todos_slots[i:i + slots_precisos]
+
+        # Não cabe o serviço inteiro até o fim da grade
+        if len(candidatos) < slots_precisos:
+            continue
+
+        # Algum dos slots necessários já está ocupado
+        if any(slot in slots_ocupados for slot in candidatos):
+            continue
+
+        # Garante que os slots são realmente consecutivos no tempo (evita
+        # "atravessar" o intervalo de almoço, ex.: 11:30 + 60 min não pode
+        # pular direto para 14:00)
+        esperado = datetime.strptime(candidatos[0], "%H:%M")
+        consecutivos = True
+        for slot in candidatos:
+            if slot != esperado.strftime("%H:%M"):
+                consecutivos = False
+                break
+            esperado += timedelta(minutes=DURACAO_SLOT_MINUTOS)
+
+        if consecutivos:
+            disponiveis.append(candidatos[0])
+
+    return disponiveis
+
+
+def _horario_fim(hora_inicio, duracao_minutos):
+    '''Calcula o horário de término (HH:MM) a partir do horário de início
+    e da duração em minutos. Usado para exibir o intervalo completo que
+    um agendamento ocupa (ex.: "08:00–09:00"), não só o horário de início.'''
+    inicio_dt = datetime.strptime(hora_inicio, "%H:%M")
+    fim_dt = inicio_dt + timedelta(minutes=duracao_minutos)
+    return fim_dt.strftime("%H:%M")
 
 
 def _proximo_id(agendamentos):
@@ -27,10 +125,12 @@ def listar_agendamentos(agendamentos):
     # Ordena pelo id numérico para a lista sempre aparecer em ordem (1, 2, 3...)
     for id_agendamento in sorted(agendamentos.keys(), key=int):
         agendamento = agendamentos[id_agendamento]
+        duracao = agendamento.get("duracao_minutos", DURACAO_SLOT_MINUTOS)
+        intervalo = f"{agendamento['hora']}–{_horario_fim(agendamento['hora'], duracao)}"
         print(
             f"| {id_agendamento} - {agendamento['nome_cliente']} | "
             f"{agendamento['nome_servico']} | {agendamento['data']} "
-            f"{agendamento['hora']} | status: {agendamento['status']}"
+            f"{intervalo} | status: {agendamento['status']}"
         )
     return True
 
@@ -64,8 +164,10 @@ def listar_agendamentos_do_dia(agendamentos, data=None):
     print(f"\n| Agendamentos do dia {data}:")
     for id_ag in sorted(agendamentos_do_dia, key=lambda i: agendamentos_do_dia[i]["hora"]):
         ag = agendamentos_do_dia[id_ag]
+        duracao = ag.get("duracao_minutos", DURACAO_SLOT_MINUTOS)
+        intervalo = f"{ag['hora']}–{_horario_fim(ag['hora'], duracao)}"
         print(
-            f"| {ag['hora']} - {ag['nome_cliente']} | "
+            f"| {intervalo} - {ag['nome_cliente']} | "
             f"{ag['nome_servico']} | status: {ag['status']}"
         )
     return True
@@ -86,27 +188,33 @@ def adicionar_agendamento(agendamentos, catalogo_servicos, id_cliente, nome_clie
             print("| Serviço não encontrado.")
             return
 
-        # Seleção da data/horário de atendimento
-        data = input("| Data (ex: 25/03/2026): ").strip()
-        horario = input("| Horário (ex: 16:30): ").strip()
+        duracao_servico = catalogo_servicos[id_servico]["duracao"]
 
+        # Seleção da data de atendimento
+        data = input("| Data (ex: 25/03/2026): ").strip()
         try:
             datetime.strptime(data, "%d/%m/%Y")
-            datetime.strptime(horario, "%H:%M")
         except ValueError:
-            print("| Data ou horário em formato inválido.")
+            print("| Data em formato inválido.")
             continue
 
-        # Verifica se já existe outro agendamento ATIVO no mesmo data+hora
-        horario_ocupado = False
-        for id_ag, ag in agendamentos.items():
-            if ag["data"] == data and ag["hora"] == horario and ag["status"] == "agendado":
-                horario_ocupado = True
-                break
-
-        if horario_ocupado:
-            print("| Esse horário já está ocupado. Escolha outro.")
+        # Mostra apenas os horários fixos (8h-12h e 14h-18h) que realmente
+        # cabem esse serviço, já descontando os slots ocupados naquele dia
+        slots_livres = horarios_disponiveis(agendamentos, data, duracao_servico)
+        if not slots_livres:
+            print("| Não há horários disponíveis nesse dia para esse serviço.")
             continue
+
+        print(f"\n| Horários disponíveis em {data}:")
+        for i, slot in enumerate(slots_livres, start=1):
+            print(f"| {i} - {slot}–{_horario_fim(slot, duracao_servico)}")
+
+        escolha = input("| Escolha o número do horário: ").strip()
+        if not escolha.isdigit() or not (1 <= int(escolha) <= len(slots_livres)):
+            print("| Opção inválida.")
+            continue
+
+        horario = slots_livres[int(escolha) - 1]
 
         novo_id_agendamento = _proximo_id(agendamentos)
         agendamentos[novo_id_agendamento] = {
@@ -117,6 +225,7 @@ def adicionar_agendamento(agendamentos, catalogo_servicos, id_cliente, nome_clie
             "nome_servico": catalogo_servicos[id_servico]["nome"],
             "data": data,
             "hora": horario,
+            "duracao_minutos": duracao_servico,
             "status": "agendado",
         }
 
@@ -142,11 +251,13 @@ def cancelar_agendamento(agendamentos, id_cliente):
 
     print("\n| Seus agendamentos ativos:")
     for id_ag, ag in agendamentos_cliente.items():
-        print(f"| {id_ag} - {ag['nome_servico']}: {ag['data']} {ag['hora']}")
+        duracao = ag.get("duracao_minutos", DURACAO_SLOT_MINUTOS)
+        intervalo = f"{ag['hora']}–{_horario_fim(ag['hora'], duracao)}"
+        print(f"| {id_ag} - {ag['nome_servico']}: {ag['data']} {intervalo}")
 
     id_cancelado = input("| Qual agendamento deseja cancelar (informe o número): ").strip()
 
-    # Verifica dentro de agendamentos_cliente, não de agendamentos inteiro —
+    # Verifica dentro de agendamentos_cliente, não de agendamentos inteiro -(negativo)
     # impede o cliente de cancelar um agendamento de outra pessoa
     if id_cancelado not in agendamentos_cliente:
         print("| Agendamento não encontrado entre os seus.")
