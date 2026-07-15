@@ -95,7 +95,14 @@ def menu_cliente(id_usuario, usuario):
         limpar_tela()
         print("GRAZY SALON")
         print(f"1 - Ver serviços\n2 - Horários livres\n3 - Fazer agendamento\n 4 - Alterar senha\n0 - Sair")
-        escolha = int(input("Deseja realizar qual ação?"))
+        
+        while True:
+            try:
+                escolha = int(input("Deseja realizar qual ação? "))
+                break
+            except ValueError:
+                print("Digite um número válido.")
+            
         if escolha == 1:
             limpar_tela()
             servicos()
