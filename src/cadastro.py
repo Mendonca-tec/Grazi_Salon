@@ -11,14 +11,13 @@ def validar_email(email):
     return re.match(padrao, email) is not None
 
 
-def cadastro(usuarios):
-    ''' Nessa função devera adcionar o cliente ao banco de dados sobre os clientes.
-        ele deve informar todos dados pedidos e o sistema vai verificar se o email já está
-        cadastrado em alguma outra conta. Novos usuários sempre entram com tipo "cliente",
-        como pede o documento.'''
-
-    # Import feito aqui dentro para evitar import circular com login.py
-    from src.login import login
+def criar_conta(usuarios):
+    ''' Cria uma nova conta e a adiciona ao dicionário de usuários, sempre
+    com tipo "cliente" (como pede o documento). Pede os dados, valida, e
+    salva no arquivo. Retorna o id do novo usuário em caso de sucesso, ou
+    None se o usuário cancelar/houver algum problema irreparável — usada
+    tanto pelo cadastro público (cadastro()) quanto pelo admin, que cadastra
+    clientes sem precisar fazer login logo em seguida.'''
 
     print("| Preencha todos os dados a seguir.")
     while True:
@@ -69,6 +68,17 @@ def cadastro(usuarios):
         # Persiste a alteração no arquivo JSON
         dados.salvar_usuarios(usuarios)
         print("| Conta criada com sucesso!")
-        break
+        return novo_id
 
+
+def cadastro(usuarios):
+    ''' Fluxo de cadastro PÚBLICO (tela inicial: Login / Criar Conta).
+    Cria a conta e, em seguida, já direciona para o login — comportamento
+    que só faz sentido nesse contexto, e não quando é o admin quem está
+    cadastrando um cliente pelo painel administrativo (ver criar_conta).'''
+
+    # Import feito aqui dentro para evitar import circular com login.py
+    from src.login import login
+
+    criar_conta(usuarios)
     return login(usuarios)
