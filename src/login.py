@@ -6,7 +6,7 @@ from src import dados
 
 def cabecalho(stdscr):
     '''Desenha o título fixo no topo da tela'''
-    stdscr.addstr(0, 2, "=== SALON NOE ===")
+    stdscr.addstr(0, 2, "=== Salão de Beleza - Sistema de Agendamentos ===")
 
 
 def entrada_do_sistema(stdscr):
@@ -68,6 +68,10 @@ def login(usuarios):
 
         for id_usuario, dados_usuario in usuarios.items():
             if dados_usuario["email"].lower() == email and dados_usuario["senha"] == senha:
+                # Contas com status "inativo" (cliente excluído pelo admin)
+                # não conseguem mais logar, mesmo com email/senha corretos
+                if dados_usuario.get("status", "ativo") != "ativo":
+                    continue
                 usuario_encontrado = dados_usuario
                 id_encontrado = id_usuario
                 break
