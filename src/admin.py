@@ -15,6 +15,7 @@ def menu_administrador(id_admin, admin):
     while True:
         limpar()
         print("="*40)
+        print("        ====PYSALON====")
         print("      PAINEL ADMINISTRATIVO")
         print("="*40)
         print(f"Administrador: {admin['nome']}")
